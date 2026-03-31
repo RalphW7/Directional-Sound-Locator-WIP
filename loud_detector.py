@@ -7,41 +7,43 @@ adc1 = ADC(26)
 adc2 = ADC(27)
 adc3 = ADC(28)
 
+#mic positions:
+#     3
+# 1   2
+
+#mic positions in meter grid, mic 1 treated as origin
+pos1 = [0,0]
+pos2 = [0.077, 0]
+pos3 = [0.077, 0.056]
+C = 343 #speed of sound
+
 THRESHOLD = 40000      # adjust experimentally
 WAIT_WINDOW_US = 3000  # how long to wait for other mics
 
 shared_vals = {
     "order": [],
-    "delays": []
+    "delays": [],
+    "angle": []
 }
 
 lock = _thread.allocate_lock()
-
 
 def print_thread():
     while True:
         lock.acquire()
         order = shared_vals["order"]
         delays = shared_vals["delays"]
+        theta = shared_vals["angle"]
         lock.release()
 
         if order:
             print("Detection order:", order)
             print("Delays (us):", delays)
+            print("Theta:", theta)
 
         time.sleep(0.1)
 
-
 _thread.start_new_thread(print_thread, ())
-
-#mic positions:
-#     3
-# 1   2
-
-# mic positions in cm grid. mic treated as origin
-pos1 = [0,0]
-pos2 = [7.7, 0]
-pos3 = [7.7, 5.6]
 
 dist1_2 = pos2[0] - pos2[0]
 dist2_3 = pos3[1] - pos2[1]
@@ -86,7 +88,7 @@ while True:
             if times[2] is None and val3 > THRESHOLD:
                 times[2] = now
 
-        # compute order and delays
+        # compute order and fixed mic delays
         detections = []
         for i, t in enumerate(times):
             if t is not None:
@@ -98,16 +100,51 @@ while True:
 
             first_time = detections[0][1]
 
-            order = []
-            delays = []
+            # detection order still useful for debugging
+            order = [mic for mic, _ in detections]
 
-            for mic, t in detections:
-                order.append(mic)
-                delays.append(time.ticks_diff(t, first_time))
+            # fixed indexing:
+            # delays[0] = mic1
+            # delays[1] = mic2
+            # delays[2] = mic3
+            delays = [None, None, None]
+
+            for mic_num, t in detections:
+                delays[mic_num - 1] = time.ticks_diff(t, first_time)
+
+            if (delays[0] != None and delays[1] != None and delays[2] != None):
+                delta21 = delays[1] - delays[0]
+                delta31 = delays[2] - delays[0]
+
+                a = pos2[0] - pos1[0]
+                b = pos2[1] - pos1[1]
+                c = pos3[0] - pos1[0]
+                d = pos3[1] - pos1[1]
+
+                b1 = C*delta21
+                b2 = C*delta31
+
+                det = a*d - b*c
+
+                if(det != 0):
+                    sx = (d*b1 - b*b2)/det
+                    sy = (-c*b1 + a*b2)/det
+                    norm = math.sqrt(sx**2 + sy**2)
+                    if (norm != 0):
+                        sx /= norm
+                        sy /= norm
+                        ang = math.atan2(sx, sy)
+                    else:
+                        ang = 6.7
+                else:
+                    ang = 6.7
+            else:
+                ang = 6.7
 
             lock.acquire()
             shared_vals["order"] = order
             shared_vals["delays"] = delays
+            shared_vals["angle"] = [ang]
             lock.release()
 
         # small debounce so same sound doesn't retrigger
