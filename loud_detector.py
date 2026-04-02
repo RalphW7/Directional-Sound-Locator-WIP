@@ -1,4 +1,5 @@
 from machine import ADC
+from machine import Pin, PWM
 import time
 import _thread
 import math
@@ -6,6 +7,18 @@ import math
 adc1 = ADC(26)
 adc2 = ADC(27)
 adc3 = ADC(28)
+
+servo1 = PWM(Pin(15))
+servo1.freq(50)
+
+def set_angle1(thet):
+    min = 500
+    max = 2500
+    coef = (max - min)/3.14
+
+    pulse = min + coef*thet
+    duty = int((pulse/20000)*65535)
+    servo1.duty_u16(duty)
 
 #mic positions:
 #     3
@@ -40,6 +53,11 @@ def print_thread():
             print("Detection order:", order)
             print("Delays (us):", delays)
             print("Theta:", theta)
+        
+        if (theta and theta[0] >= 0 and  theta[0] != 6.7):
+            set_angle1(theta[0])
+            time.sleep(1)
+        
 
         time.sleep(0.1)
 
