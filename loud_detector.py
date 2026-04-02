@@ -30,8 +30,48 @@ pos2 = [0.077, 0]
 pos3 = [0.077, 0.056]
 C = 343 #speed of sound
 
-THRESHOLD = 40000      # adjust experimentally
-WAIT_WINDOW_US = 3000  # how long to wait for other mics
+BUFFER_SIZE = 64
+SAMPLE_DELAY_US = 20
+AMP_THRESHOLD = 20000
+
+
+def capture_buffer():
+    mic1 = []
+    mic2 = []
+    mic3 = []
+
+    for _ in range(BUFFER_SIZE):
+        mic1.append(adc1.read_u16())
+        mic2.append(adc2.read_u16())
+        mic3.append(adc3.read_u16())
+        time.sleep_us(SAMPLE_DELAY_US)
+
+    return mic1, mic2, mic3
+
+
+def remove_dc(signal):
+    avg = sum(signal) / len(signal)
+    return [x - avg for x in signal]
+
+
+def cross_correlate(sig1, sig2, max_shift=30):
+    best_shift = 0
+    best_score = -1e18
+
+    for shift in range(-max_shift, max_shift + 1):
+        score = 0
+
+        for i in range(len(sig1)):
+            j = i + shift
+
+            if 0 <= j < len(sig2):
+                score += sig1[i] * sig2[j]
+
+        if score > best_score:
+            best_score = score
+            best_shift = shift
+
+    return best_shift
 
 shared_vals = {
     "order": [],
@@ -54,7 +94,7 @@ def print_thread():
             print("Delays (us):", delays)
             print("Theta:", theta)
         
-        if (theta and theta[0] >= 0 and  theta[0] != 6.7):
+        if (theta and theta[0] >= 0 and theta[0] != 6.7):
             set_angle1(theta[0])
             time.sleep(1)
         
@@ -63,107 +103,81 @@ def print_thread():
 
 _thread.start_new_thread(print_thread, ())
 
-dist1_2 = pos2[0] - pos2[0]
+dist1_2 = pos2[0] - pos1[0]
 dist2_3 = pos3[1] - pos2[1]
 dist1_3 = math.sqrt(dist1_2**2 + dist2_3**2)
 
 while True:
 
-    val1 = adc1.read_u16()
-    val2 = adc2.read_u16()
-    val3 = adc3.read_u16()
+    mic1, mic2, mic3 = capture_buffer()
 
-    # wait until any mic exceeds threshold
-    if val1 > THRESHOLD or val2 > THRESHOLD or val3 > THRESHOLD:
+    amp1 = max(mic1) - min(mic1)
+    amp2 = max(mic2) - min(mic2)
+    amp3 = max(mic3) - min(mic3)
 
-        t0 = time.ticks_us()
+    peak_amp = max(amp1, amp2, amp3)
 
-        times = [None, None, None]
+    if peak_amp > AMP_THRESHOLD:
 
-        if val1 > THRESHOLD:
-            times[0] = t0
-        if val2 > THRESHOLD:
-            times[1] = t0
-        if val3 > THRESHOLD:
-            times[2] = t0
+        mic1 = remove_dc(mic1)
+        mic2 = remove_dc(mic2)
+        mic3 = remove_dc(mic3)
 
-        start_wait = t0
+        shift12 = cross_correlate(mic1, mic2)
+        shift13 = cross_correlate(mic1, mic3)
 
-        while time.ticks_diff(time.ticks_us(), start_wait) < WAIT_WINDOW_US:
+        delay12 = shift12 * SAMPLE_DELAY_US
+        delay13 = shift13 * SAMPLE_DELAY_US
 
-            val1 = adc1.read_u16()
-            val2 = adc2.read_u16()
-            val3 = adc3.read_u16()
+        t1 = 0
+        t2 = delay12
+        t3 = delay13
 
-            now = time.ticks_us()
+        first = min(t1, t2, t3)
 
-            if times[0] is None and val1 > THRESHOLD:
-                times[0] = now
+        delays = [
+            t1 - first,
+            t2 - first,
+            t3 - first
+        ]
 
-            if times[1] is None and val2 > THRESHOLD:
-                times[1] = now
+        order = sorted(
+            [1, 2, 3],
+            key=lambda i: delays[i - 1]
+        )
 
-            if times[2] is None and val3 > THRESHOLD:
-                times[2] = now
+        delta21 = delay12
+        delta31 = delay13
 
-        # compute order and fixed mic delays
-        detections = []
-        for i, t in enumerate(times):
-            if t is not None:
-                detections.append((i + 1, t))
+        a = pos2[0] - pos1[0]
+        b = pos2[1] - pos1[1]
+        c = pos3[0] - pos1[0]
+        d = pos3[1] - pos1[1]
 
-        detections.sort(key=lambda x: x[1])
+        b1 = C * (delta21 / 1_000_000)
+        b2 = C * (delta31 / 1_000_000)
 
-        if detections:
+        det = a * d - b * c
 
-            first_time = detections[0][1]
+        if det != 0:
+            sx = (d * b1 - b * b2) / det
+            sy = (-c * b1 + a * b2) / det
 
-            # detection order still useful for debugging
-            order = [mic for mic, _ in detections]
+            norm = math.sqrt(sx**2 + sy**2)
 
-            # fixed indexing:
-            # delays[0] = mic1
-            # delays[1] = mic2
-            # delays[2] = mic3
-            delays = [None, None, None]
-
-            for mic_num, t in detections:
-                delays[mic_num - 1] = time.ticks_diff(t, first_time)
-
-            if (delays[0] != None and delays[1] != None and delays[2] != None):
-                delta21 = delays[1] - delays[0]
-                delta31 = delays[2] - delays[0]
-
-                a = pos2[0] - pos1[0]
-                b = pos2[1] - pos1[1]
-                c = pos3[0] - pos1[0]
-                d = pos3[1] - pos1[1]
-
-                b1 = C*delta21
-                b2 = C*delta31
-
-                det = a*d - b*c
-
-                if(det != 0):
-                    sx = (d*b1 - b*b2)/det
-                    sy = (-c*b1 + a*b2)/det
-                    norm = math.sqrt(sx**2 + sy**2)
-                    if (norm != 0):
-                        sx /= norm
-                        sy /= norm
-                        ang = math.atan2(sx, sy)
-                    else:
-                        ang = 6.7
-                else:
-                    ang = 6.7
+            if norm != 0:
+                sx /= norm
+                sy /= norm
+                ang = math.atan2(sy, sx)
             else:
                 ang = 6.7
+        else:
+            ang = 6.7
 
-            lock.acquire()
-            shared_vals["order"] = order
-            shared_vals["delays"] = delays
-            shared_vals["angle"] = [ang]
-            lock.release()
+        lock.acquire()
+        shared_vals["order"] = order
+        shared_vals["delays"] = delays
+        shared_vals["angle"] = [ang]
+        lock.release()
 
-        # small debounce so same sound doesn't retrigger
         time.sleep_ms(50)
