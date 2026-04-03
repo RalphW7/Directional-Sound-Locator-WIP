@@ -9,7 +9,9 @@ adc2 = ADC(27)
 adc3 = ADC(28)
 
 servo1 = PWM(Pin(15))
+servo2 = PWM(Pin(14))
 servo1.freq(50)
+servo2.freq
 
 def set_angle1(thet):
     min = 500
@@ -19,6 +21,16 @@ def set_angle1(thet):
     pulse = min + coef*thet
     duty = int((pulse/20000)*65535)
     servo1.duty_u16(duty)
+
+def set_angle2(thet):
+    thet += 3.14
+    min = 500
+    max = 2500
+    coef = (max - min)/3.14
+  
+    pulse = min + coef*(thet)
+    duty = int((pulse/20000)*65535)
+    servo2.duty_u16(duty)
 
 #mic positions:
 #     3
@@ -32,7 +44,7 @@ C = 343 #speed of sound
 
 BUFFER_SIZE = 64
 SAMPLE_DELAY_US = 20
-AMP_THRESHOLD = 20000
+AMP_THRESHOLD = 10000
 
 
 def capture_buffer():
@@ -96,6 +108,10 @@ def print_thread():
         
         if (theta and theta[0] >= 0 and theta[0] != 6.7):
             set_angle1(theta[0])
+            time.sleep(1)
+
+        if (theta and theta[0] <= 0 and theta[0]):
+            set_angle2(theta[0])
             time.sleep(1)
         
 
@@ -170,7 +186,7 @@ while True:
                 sy /= norm
                 ang = math.atan2(sy, sx)
             else:
-                ang = 6.7
+                ang = 6.9
         else:
             ang = 6.7
 
