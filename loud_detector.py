@@ -106,7 +106,7 @@ def print_thread():
             print("Delays (us):", delays)
             print("Theta:", theta)
         
-        if (theta and theta[0] >= 0 and theta[0] != 6.7):
+        if (theta and theta[0] >= 0 and theta[0] != 10):
             set_angle1(theta[0])
             time.sleep(1)
 
@@ -186,9 +186,9 @@ while True:
                 sy /= norm
                 ang = math.atan2(sy, sx)
             else:
-                ang = 6.9
+                ang = 11 #placeholder value for debugging if norm = 0, ie. garbage reading. 11 is not in possible range of  theta.
         else:
-            ang = 6.7
+            ang = 10 #placeholder value for debugging if norm = 0, ie. garbage reading. 12 is not in possible range of  theta.
 
         lock.acquire()
         shared_vals["order"] = order
